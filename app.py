@@ -11,6 +11,11 @@ import urllib.parse
 # 1. CONFIGURAÇÃO DA PÁGINA
 st.set_page_config(page_title="Dossiê Escolar - SaaS", page_icon="🏫", layout="centered")
 
+# --- VARIÁVEIS DE AMBIENTE E SEGREDOS (SaaS Security) ---
+# A senha mestra do dono do SaaS vem do servidor de hospedagem de forma segura.
+# Se rodar localmente sem configurar, usa uma padrão de testes.
+MASTER_ADMIN_PASSWORD = os.getenv("MASTER_ADMIN_PASSWORD", "mudar_senha_mestra_segura")
+
 # --- FUNÇÃO DE SLUG E ISOLAMENTO MULTI-TENANT ---
 def gerar_slug(texto):
     if not texto:
@@ -30,7 +35,7 @@ def obter_caminho_arquivo(nome_arquivo):
     os.makedirs(diretorio_escola, exist_ok=True)
     return os.path.join(diretorio_escola, nome_arquivo)
 
-# --- GESTÃO DE CREDENCIAIS DINÂMICAS ---
+# --- GESTÃO DE CREDENCIAIS DINÂMICAS DA ESCOLA ---
 def carregar_credenciais():
     caminho = obter_caminho_arquivo("config.json")
     if os.path.exists(caminho):
@@ -111,7 +116,6 @@ def gerar_pdf(dados_aluno, nome_aluno, turma):
     pdf = FPDF(orientation="P", unit="mm", format="A4")
     pdf.add_page()
     
-    # Logo dinâmica da escola
     caminho_logo_escola = obter_caminho_arquivo("logo.png")
     if os.path.exists(caminho_logo_escola):
         pdf.image(caminho_logo_escola, x=10, y=8, w=30)
@@ -154,7 +158,7 @@ def gerar_pdf(dados_aluno, nome_aluno, turma):
     
     return bytes(pdf.output())
 
-# 2. LÓGICA DE LOGIN COM CREDENCIAIS DA ESCOLA
+# 2. LÓGICA DE LOGIN COM SUPORTE A SUPER ADMIN E ESCOLAS
 if "nivel_acesso" not in st.session_state:
     st.session_state.nivel_acesso = None
 if "escola_nome" not in st.session_state:
@@ -164,39 +168,70 @@ if "escola_cidade" not in st.session_state:
 
 if st.session_state.nivel_acesso is None:
     st.markdown(f"<h1 style='text-align: center;'>🏫 Portal de Gestão Escolar</h1>", unsafe_allow_html=True)
-    st.markdown("<h3 style='text-align: center; color: gray;'>Identifique sua instituição para acessar</h3>", unsafe_allow_html=True)
+    st.markdown("<h3 style='text-align: center; color: gray;'>Identifique sua instituição ou acesse como Admin</h3>", unsafe_allow_html=True)
     st.write("")
     
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        nome_inst = st.text_input("🏢 Nome da Escola:", placeholder="Ex: Colégio Alfa").strip()
-        cidade_inst = st.text_input("📍 Cidade / Estado:", placeholder="Ex: Londrina - PR").strip()
-        senha_digitada = st.text_input("🔑 Senha de acesso:", type="password")
+        tipo_login = st.radio("Tipo de Acesso:", ["Escola (Professor / Coordenação / Secretaria)", "Administrador SaaS (Master)"])
         
-        if st.button("Entrar no Sistema", use_container_width=True):
-            if not nome_inst or not cidade_inst:
-                st.error("Preencha o nome da escola e a cidade/estado.")
-            else:
-                st.session_state.escola_nome = nome_inst
-                st.session_state.escola_cidade = cidade_inst
-                inicializar_arquivos()
-                
-                creds = carregar_credenciais()
-                
-                if senha_digitada == creds.get("senha_professor"):
-                    st.session_state.nivel_acesso = "Professor"
-                    st.rerun()
-                elif senha_digitada == creds.get("senha_coordenador"):
-                    st.session_state.nivel_acesso = "Coordenador"
-                    st.rerun()
-                elif senha_digitada == creds.get("senha_secretaria"):
-                    st.session_state.nivel_acesso = "Secretaria"
+        if "Administrador" in tipo_login:
+            senha_admin = st.text_input("🔑 Senha Mestra do Sistema:", type="password")
+            if st.button("Acessar Painel Global", use_container_width=True):
+                if senha_admin == MASTER_ADMIN_PASSWORD:
+                    st.session_state.nivel_acesso = "SuperAdmin"
                     st.rerun()
                 else:
-                    st.error("Senha incorreta para esta instituição.")
+                    st.error("Senha mestra incorreta.")
+        else:
+            nome_inst = st.text_input("🏢 Nome da Escola:", placeholder="Ex: Colégio Alfa").strip()
+            cidade_inst = st.text_input("📍 Cidade / Estado:", placeholder="Ex: Londrina - PR").strip()
+            senha_digitada = st.text_input("🔑 Senha de acesso:", type="password")
+            
+            if st.button("Entrar no Sistema", use_container_width=True):
+                if not nome_inst or not cidade_inst:
+                    st.error("Preencha o nome da escola e a cidade/estado.")
+                else:
+                    st.session_state.escola_nome = nome_inst
+                    st.session_state.escola_cidade = cidade_inst
+                    inicializar_arquivos()
+                    
+                    creds = carregar_credenciais()
+                    
+                    if senha_digitada == creds.get("senha_professor"):
+                        st.session_state.nivel_acesso = "Professor"
+                        st.rerun()
+                    elif senha_digitada == creds.get("senha_coordenador"):
+                        st.session_state.nivel_acesso = "Coordenador"
+                        st.rerun()
+                    elif senha_digitada == creds.get("senha_secretaria"):
+                        st.session_state.nivel_acesso = "Secretaria"
+                        st.rerun()
+                    else:
+                        st.error("Senha incorreta para esta instituição.")
     st.stop()
 
-# Garante inicialização
+# 3. PAINEL DO SUPER ADMIN (DONO DO SAAS)
+if st.session_state.nivel_acesso == "SuperAdmin":
+    st.sidebar.warning("⚠️ Modo Super Administrador (SaaS)")
+    if st.sidebar.button("Sair do Painel Admin", use_container_width=True):
+        st.session_state.nivel_acesso = None
+        st.rerun()
+        
+    st.markdown("### 🌐 Painel Global do SaaS - Plataforma")
+    st.info("Aqui você gerencia todas as instâncias e escolas hospedadas no servidor.")
+    
+    if os.path.exists("dados_escolas"):
+        pastas_escolas = os.listdir("dados_escolas")
+        st.metric("Total de Escolas Cadastradas", len(pastas_escolas))
+        st.write("Diretórios ativos no servidor:")
+        for pasta in pastas_escolas:
+            st.code(pasta)
+    else:
+        st.warning("Nenhuma pasta de escola criada ainda.")
+    st.stop()
+
+# Garante inicialização para escolas normais
 inicializar_arquivos()
 
 with st.sidebar:
@@ -209,7 +244,7 @@ with st.sidebar:
         st.session_state.nivel_acesso = None
         st.rerun()
 
-# 3. FORMULÁRIO DO PROFESSOR
+# 4. FORMULÁRIO DO PROFESSOR
 def exibir_formulario():
     st.markdown("### 📝 Registrar Nova Ocorrência")
     
@@ -255,7 +290,7 @@ def exibir_formulario():
         novo_dado.to_csv(caminho_csv, mode='a', header=not os.path.exists(caminho_csv), index=False)
         st.success(f"✅ Ocorrência registrada com sucesso para {aluno}!")
 
-# 4. PAINEL DA SECRETARIA (Com Upload de Logo e Gestão de Senhas)
+# 5. PAINEL DA SECRETARIA
 def exibir_painel_secretaria():
     st.markdown("### 🗂️ Gestão Administrativa")
     
@@ -393,7 +428,7 @@ def exibir_painel_secretaria():
     st.subheader("📋 Base Atual de Alunos e Contatos")
     st.dataframe(df_alunos, use_container_width=True, hide_index=True)
 
-# 5. GERENCIAMENTO DE PERFIS E TELAS
+# 6. GERENCIAMENTO DE PERFIS E TELAS DAS ESCOLAS
 if st.session_state.nivel_acesso == "Professor":
     exibir_formulario()
 
