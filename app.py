@@ -1,5 +1,6 @@
 import os
 import re
+import json
 import unicodedata
 from datetime import date, datetime
 import pandas as pd
@@ -14,10 +15,8 @@ st.set_page_config(page_title="Dossiê Escolar - SaaS", page_icon="🏫", layout
 def gerar_slug(texto):
     if not texto:
         return "geral"
-    # Remove acentos (ex: "São Paulo" vira "Sao Paulo")
     nfkd = unicodedata.normalize('NFKD', texto)
     sem_acento = "".join([c for c in nfkd if not unicodedata.combining(c)])
-    # Transforma em minúsculas e troca espaços/caracteres especiais por "_"
     slug = re.sub(r'[^a-zA-Z0-9]+', '_', sem_acento).lower().strip('_')
     return slug
 
@@ -34,12 +33,34 @@ def obter_caminho_arquivo(nome_arquivo):
 NOME_DA_ESCOLA = "Sistema de Gestão Pedagógica"
 ARQUIVO_LOGO = "logo.png"
 
-SENHA_PROFESSOR = "prof123"
-SENHA_COORDENACAO = "coord123"
-SENHA_SECRETARIA = "sec123"
-# --------------------------------
+# --- GESTÃO DE CREDENCIAIS DINÂMICAS ---
+def carregar_credenciais():
+    caminho = obter_caminho_arquivo("config.json")
+    if os.path.exists(caminho):
+        try:
+            with open(caminho, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            pass
+    
+    # Credenciais padrão caso o arquivo não exista
+    creds_iniciais = {
+        "senha_professor": "prof123",
+        "senha_coordenador": "coord123",
+        "senha_secretaria": "sec123"
+    }
+    salvar_credenciais(creds_iniciais)
+    return creds_iniciais
+
+def salvar_credenciais(creds):
+    caminho = obter_caminho_arquivo("config.json")
+    with open(caminho, "w", encoding="utf-8") as f:
+        json.dump(creds, f, ensure_ascii=False, indent=4)
 
 def inicializar_arquivos():
+    # Garante a criação do config.json com as senhas da escola
+    carregar_credenciais()
+    
     caminho_alunos = obter_caminho_arquivo("alunos.csv")
     if not os.path.exists(caminho_alunos):
         df_inicial = pd.DataFrame({
@@ -134,7 +155,7 @@ def gerar_pdf(dados_aluno, nome_aluno, turma):
     
     return bytes(pdf.output())
 
-# 2. LÓGICA DE LOGIN COM IDENTIFICAÇÃO DE ESCOLA E CIDADE
+# 2. LÓGICA DE LOGIN COM CREDENCIAIS DA ESCOLA
 if "nivel_acesso" not in st.session_state:
     st.session_state.nivel_acesso = None
 if "escola_nome" not in st.session_state:
@@ -161,20 +182,23 @@ if st.session_state.nivel_acesso is None:
                 st.session_state.escola_cidade = cidade_inst
                 inicializar_arquivos()
                 
-                if senha_digitada == SENHA_PROFESSOR:
+                # Carrega as senhas específicas desta escola
+                creds = carregar_credenciais()
+                
+                if senha_digitada == creds.get("senha_professor"):
                     st.session_state.nivel_acesso = "Professor"
                     st.rerun()
-                elif senha_digitada == SENHA_COORDENACAO:
+                elif senha_digitada == creds.get("senha_coordenador"):
                     st.session_state.nivel_acesso = "Coordenador"
                     st.rerun()
-                elif senha_digitada == SENHA_SECRETARIA:
+                elif senha_digitada == creds.get("senha_secretaria"):
                     st.session_state.nivel_acesso = "Secretaria"
                     st.rerun()
                 else:
-                    st.error("Senha incorreta.")
+                    st.error("Senha incorreta para esta instituição.")
     st.stop()
 
-# Garante inicialização dos arquivos da escola ativa
+# Garante inicialização
 inicializar_arquivos()
 
 with st.sidebar:
@@ -230,12 +254,12 @@ def exibir_formulario():
         novo_dado.to_csv(caminho_csv, mode='a', header=not os.path.exists(caminho_csv), index=False)
         st.success(f"✅ Ocorrência registrada com sucesso para {aluno}!")
 
-# 4. PAINEL DA SECRETARIA
+# 4. PAINEL DA SECRETARIA (Com Gerenciamento de Senhas)
 def exibir_painel_secretaria():
     st.markdown("### 🗂️ Gestão Administrativa")
     
-    tab_alunos, tab_massa, tab_categorias = st.tabs([
-        "➕ Alunos e Turmas", "📤 Importação em Lote", "⚙️ Categorias de Ocorrência"
+    tab_alunos, tab_massa, tab_categorias, tab_senhas = st.tabs([
+        "➕ Alunos e Turmas", "📤 Importação em Lote", "⚙️ Categorias", "🔑 Senhas de Acesso"
     ])
     
     df_alunos = carregar_alunos()
@@ -325,6 +349,28 @@ def exibir_painel_secretaria():
         
         st.write("Categorias ativas atualmente:")
         st.write(cats_atuais)
+
+    with tab_senhas:
+        st.subheader("🔑 Alterar Senhas de Acesso da Instituição")
+        creds_atuais = carregar_credenciais()
+        
+        with st.form("form_alterar_senhas"):
+            nova_s_prof = st.text_input("Nova Senha de Professor:", value=creds_atuais.get("senha_professor", ""), type="password")
+            nova_s_coord = st.text_input("Nova Senha de Coordenação:", value=creds_atuais.get("senha_coordenador", ""), type="password")
+            nova_s_sec = st.text_input("Nova Senha de Secretaria:", value=creds_atuais.get("senha_secretaria", ""), type="password")
+            
+            btn_salvar_senhas = st.form_submit_button("Salvar Novas Senhas", use_container_width=True)
+            if btn_salvar_senhas:
+                if not nova_s_prof or not nova_s_coord or not nova_s_sec:
+                    st.error("Nenhuma das senhas pode ficar em branco.")
+                else:
+                    novas_creds = {
+                        "senha_professor": nova_s_prof,
+                        "senha_coordenador": nova_s_coord,
+                        "senha_secretaria": nova_s_sec
+                    }
+                    salvar_credenciais(novas_creds)
+                    st.success("🔒 Senhas atualizadas com sucesso para esta escola!")
 
     st.divider()
     st.subheader("📋 Base Atual de Alunos e Contatos")
