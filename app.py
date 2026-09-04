@@ -1,4 +1,5 @@
 import os
+import re
 from datetime import date, datetime
 import pandas as pd
 from fpdf import FPDF
@@ -6,7 +7,7 @@ import streamlit as st
 import urllib.parse
 
 # 1. CONFIGURAÇÃO DA PÁGINA
-st.set_page_config(page_title="Dossiê Escolar 3.0", page_icon="🏫", layout="centered")
+st.set_page_config(page_title="Dossiê Escolar 3.1", page_icon="🏫", layout="centered")
 
 # --- CONFIGURAÇÕES DO SISTEMA ---
 ARQUIVO_CSV = "ocorrencias.csv"
@@ -62,9 +63,12 @@ def carregar_categorias():
 
 def carregar_dados():
     if os.path.exists(ARQUIVO_CSV):
-        return pd.read_csv(ARQUIVO_CSV)
+        df = pd.read_csv(ARQUIVO_CSV)
+        if "Matéria" not in df.columns:
+            df["Matéria"] = "Geral / Diversos"
+        return df
     else:
-        return pd.DataFrame(columns=["Data", "Turma", "Aluno", "Categoria", "Descrição"])
+        return pd.DataFrame(columns=["Data", "Turma", "Aluno", "Matéria", "Categoria", "Descrição"])
 
 def gerar_pdf(dados_aluno, nome_aluno, turma):
     pdf = FPDF(orientation="P", unit="mm", format="A4")
@@ -84,21 +88,24 @@ def gerar_pdf(dados_aluno, nome_aluno, turma):
     pdf.cell(0, 8, f"Data de Emissão: {date.today().strftime('%d/%m/%Y')}", ln=True)
     pdf.ln(10)
     
-    pdf.set_font("helvetica", "B", 10)
-    pdf.cell(30, 10, "Data", border=1, align="C")
-    pdf.cell(60, 10, "Natureza", border=1, align="C")
-    pdf.cell(100, 10, "Descrição", border=1, align="C")
+    pdf.set_font("helvetica", "B", 9)
+    pdf.cell(25, 10, "Data", border=1, align="C")
+    pdf.cell(40, 10, "Matéria", border=1, align="C")
+    pdf.cell(50, 10, "Natureza", border=1, align="C")
+    pdf.cell(75, 10, "Descrição", border=1, align="C")
     pdf.ln()
     
-    pdf.set_font("helvetica", "", 10)
+    pdf.set_font("helvetica", "", 9)
     for _, linha in dados_aluno.iterrows():
         data_br = pd.to_datetime(linha['Data']).strftime('%d/%m/%Y')
-        pdf.cell(30, 10, data_br, border=1, align="C")
-        pdf.cell(60, 10, str(linha['Categoria'])[:30], border=1) 
-        pdf.cell(100, 10, str(linha['Descrição'])[:55], border=1)
+        materia_val = str(linha.get('Matéria', 'Geral'))[:20]
+        pdf.cell(25, 10, data_br, border=1, align="C")
+        pdf.cell(40, 10, materia_val, border=1)
+        pdf.cell(50, 10, str(linha['Categoria'])[:25], border=1) 
+        pdf.cell(75, 10, str(linha['Descrição'])[:40], border=1)
         pdf.ln()
         
-    pdf.ln(30)
+    pdf.ln(25)
     pdf.cell(95, 10, "___________________________________", align="C")
     pdf.cell(95, 10, "___________________________________", align="C", ln=True)
     pdf.cell(95, 10, "Coordenação Pedagógica", align="C")
@@ -112,7 +119,7 @@ if "nivel_acesso" not in st.session_state:
 
 if st.session_state.nivel_acesso is None:
     st.markdown(f"<h1 style='text-align: center;'>🏫 {NOME_DA_ESCOLA}</h1>", unsafe_allow_html=True)
-    st.markdown("<h3 style='text-align: center; color: gray;'>Sistema de Gestão Pedagógica 3.0</h3>", unsafe_allow_html=True)
+    st.markdown("<h3 style='text-align: center; color: gray;'>Sistema de Gestão Pedagógica 3.1</h3>", unsafe_allow_html=True)
     st.write("")
     
     col1, col2, col3 = st.columns([1, 2, 1])
@@ -151,20 +158,26 @@ def exibir_formulario():
         return
 
     turmas_disponiveis = sorted(df_alunos["Turma"].dropna().unique().tolist())
+    materias_disponiveis = [
+        "Matemática", "Português", "Biologia", "História", "Geografia", 
+        "Física", "Química", "Inglês", "Eduração Física", "Sociologia", "Filosofia", "Geral / Diversos"
+    ]
 
     with st.form("form_ocorrencia"):
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         with col1:
             data_registro = st.date_input("Data da Ocorrência", date.today())
         with col2:
             turma = st.selectbox("Turma", turmas_disponiveis)
+        with col3:
+            materia = st.selectbox("Matéria / Disciplina", materias_disponiveis)
         
         alunos_da_turma = sorted(df_alunos[df_alunos["Turma"] == turma]["Aluno"].dropna().unique().tolist())
         
-        col3, col4 = st.columns(2)
-        with col3:
-            aluno = st.selectbox("Nome do Aluno", alunos_da_turma)
+        col4, col5 = st.columns(2)
         with col4:
+            aluno = st.selectbox("Nome do Aluno", alunos_da_turma)
+        with col5:
             categoria = st.selectbox("Natureza da Ocorrência", categorias_disponiveis)
             
         descricao = st.text_area("Descrição detalhada da ocorrência:")
@@ -173,7 +186,7 @@ def exibir_formulario():
     if submit:
         novo_dado = pd.DataFrame([{
             "Data": data_registro, "Turma": turma, "Aluno": aluno, 
-            "Categoria": categoria, "Descrição": descricao
+            "Matéria": materia, "Categoria": categoria, "Descrição": descricao
         }])
         novo_dado.to_csv(ARQUIVO_CSV, mode='a', header=not os.path.exists(ARQUIVO_CSV), index=False)
         st.success(f"✅ Ocorrência registrada com sucesso para {aluno}!")
@@ -236,7 +249,6 @@ def exibir_painel_secretaria():
                 colunas_obrigatorias = ['Turma', 'Aluno', 'Responsavel1', 'telefone1']
                 
                 if all(col in df_importado.columns for col in colunas_obrigatorias):
-                    # Assegura colunas opcionais caso venham vazias ou ausentes
                     if 'Responsavel2' not in df_importado.columns:
                         df_importado['Responsavel2'] = ""
                     if 'telefone2' not in df_importado.columns:
@@ -316,26 +328,31 @@ elif st.session_state.nivel_acesso == "Coordenação" or st.session_state.nivel_
             if not dados_filtrados.empty:
                 aluno_info = df_alunos[df_alunos["Aluno"] == aluno_busca]
                 resp1_nome = str(aluno_info["Responsavel1"].values[0]) if not aluno_info.empty and pd.notna(aluno_info["Responsavel1"].values[0]) else "Responsável 1"
-                tel1 = str(aluno_info["telefone1"].values[0]) if not aluno_info.empty and pd.notna(aluno_info["telefone1"].values[0]) else ""
+                tel1_raw = str(aluno_info["telefone1"].values[0]) if not aluno_info.empty and pd.notna(aluno_info["telefone1"].values[0]) else ""
                 
                 resp2_nome = str(aluno_info["Responsavel2"].values[0]) if not aluno_info.empty and pd.notna(aluno_info["Responsavel2"].values[0]) else "Responsável 2"
-                tel2 = str(aluno_info["telefone2"].values[0]) if not aluno_info.empty and pd.notna(aluno_info["telefone2"].values[0]) else ""
+                tel2_raw = str(aluno_info["telefone2"].values[0]) if not aluno_info.empty and pd.notna(aluno_info["telefone2"].values[0]) else ""
+                
+                # Limpeza de caracteres não numéricos para evitar erro 404 no WhatsApp
+                tel1 = re.sub(r'\D', '', tel1_raw)
+                tel2 = re.sub(r'\D', '', tel2_raw)
                 
                 msg_whatsapp = f"Olá, responsável por {aluno_busca} ({turma_busca}). Segue o resumo das ocorrências registradas na escola:\n\n"
                 for _, r in dados_filtrados.iterrows():
-                    msg_whatsapp += f"- Data: {r['Data']} | {r['Categoria']}: {r['Descrição']}\n"
+                    mat_txt = f"[{r.get('Matéria', 'Geral')}] " if 'Matéria' in r else ""
+                    msg_whatsapp += f"- Data: {r['Data']} | {mat_txt}{r['Categoria']}: {r['Descrição']}\n"
                 msg_encoded = urllib.parse.quote(msg_whatsapp)
                 
                 col_w1, col_w2 = st.columns(2)
                 with col_w1:
                     if tel1.strip():
-                        link_wa1 = f"https://wa.me/55{tel1.strip()}?text={msg_encoded}"
+                        link_wa1 = f"https://wa.me/55{tel1}?text={msg_encoded}"
                         st.markdown(f'<a href="{link_wa1}" target="_blank"><button style="background-color:#25D366;color:white;padding:10px 15px;border:none;border-radius:5px;cursor:pointer;font-weight:bold;width:100%;">💬 WhatsApp ({resp1_nome})</button></a>', unsafe_allow_html=True)
                     else:
                         st.info("Resp. 1 sem telefone cadastrado.")
                 with col_w2:
                     if tel2.strip():
-                        link_wa2 = f"https://wa.me/55{tel2.strip()}?text={msg_encoded}"
+                        link_wa2 = f"https://wa.me/55{tel2}?text={msg_encoded}"
                         st.markdown(f'<a href="{link_wa2}" target="_blank"><button style="background-color:#25D366;color:white;padding:10px 15px;border:none;border-radius:5px;cursor:pointer;font-weight:bold;width:100%;">💬 WhatsApp ({resp2_nome})</button></a>', unsafe_allow_html=True)
                     else:
                         st.caption("Resp. 2 sem telefone cadastrado.")
@@ -351,7 +368,7 @@ elif st.session_state.nivel_acesso == "Coordenação" or st.session_state.nivel_
                 )
 
     with aba3:
-        st.markdown("### 📈 Indicadores Pedagógicos com Filtro por Período")
+        st.markdown("### 📈 Indicadores Pedagógicos com Filtro por Período e Matéria")
         dados_historico = carregar_dados()
         
         if dados_historico.empty:
@@ -379,17 +396,17 @@ elif st.session_state.nivel_acesso == "Coordenação" or st.session_state.nivel_
                     t_freq = df_periodo['Turma'].mode()[0] if not df_periodo.empty else "-"
                     st.metric("Turma Frequente", t_freq)
                 with col_m3:
-                    c_freq = df_periodo['Categoria'].mode()[0] if not df_periodo.empty else "-"
-                    st.metric("Motivo Principal", c_freq)
+                    c_freq = df_periodo['Matéria'].mode()[0] if not df_periodo.empty else "-"
+                    st.metric("Matéria Principal", c_freq)
                 
                 st.divider()
                 cg1, cg2 = st.columns(2)
                 with cg1:
+                    st.subheader("Por Matéria")
+                    st.bar_chart(df_periodo['Matéria'].value_counts())
+                with cg2:
                     st.subheader("Por Natureza")
                     st.bar_chart(df_periodo['Categoria'].value_counts())
-                with cg2:
-                    st.subheader("Por Turma")
-                    st.bar_chart(df_periodo['Turma'].value_counts())
 
     with aba4:
         st.markdown("### ⚙️ Gestão, Edição e Exclusão de Ocorrências")
