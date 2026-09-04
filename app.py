@@ -24,7 +24,9 @@ def inicializar_arquivos():
     if not os.path.exists(ARQUIVO_ALUNOS):
         df_inicial = pd.DataFrame({
             "Turma": ["1º Ano A", "1º Ano A", "2º Ano B"],
-            "Aluno": ["Ana Silva", "Carlos Mendes", "Beatriz Costa"]
+            "Aluno": ["Ana Silva", "Carlos Mendes", "Beatriz Costa"],
+            "Responsavel1": ["43999991111", "43999992222", "43999993333"],
+            "Responsavel2": ["", "43999994444", ""]
         })
         df_inicial.to_csv(ARQUIVO_ALUNOS, index=False)
         
@@ -43,8 +45,12 @@ inicializar_arquivos()
 
 def carregar_alunos():
     if os.path.exists(ARQUIVO_ALUNOS):
-        return pd.read_csv(ARQUIVO_ALUNOS)
-    return pd.DataFrame(columns=["Turma", "Aluno"])
+        df = pd.read_csv(ARQUIVO_ALUNOS)
+        for col in ["Turma", "Aluno", "Responsavel1", "Responsavel2"]:
+            if col not in df.columns:
+                df[col] = ""
+        return df
+    return pd.DataFrame(columns=["Turma", "Aluno", "Responsavel1", "Responsavel2"])
 
 def carregar_categorias():
     if os.path.exists(ARQUIVO_CATEGORIAS):
@@ -170,7 +176,7 @@ def exibir_formulario():
         novo_dado.to_csv(ARQUIVO_CSV, mode='a', header=not os.path.exists(ARQUIVO_CSV), index=False)
         st.success(f"✅ Ocorrência registrada com sucesso para {aluno}!")
 
-# 4. PAINEL DA SECRETARIA (Com Gestão de Alunos, Turmas e Categorias)
+# 4. PAINEL DA SECRETARIA (Com Gestão de Alunos, Turmas, Telefones e Categorias)
 def exibir_painel_secretaria():
     st.markdown("### 🗂️ Gestão Administrativa")
     
@@ -191,16 +197,22 @@ def exibir_painel_secretaria():
                     turma_escolhida = st.selectbox("Turma", turmas_existentes) if tipo_turma == "Turma Existente" else st.text_input("Nova Turma:").strip()
                 else:
                     turma_escolhida = st.text_input("Nome da Nova Turma:").strip()
-            with c2:
-                st.write("")
                 novo_aluno = st.text_input("Nome Completo do Aluno:").strip()
+            with c2:
+                resp1 = st.text_input("Telefone Responsável 1 (Ex: 43999991111):").strip()
+                resp2 = st.text_input("Telefone Responsável 2 (Opcional):").strip()
             
             btn_cadastrar = st.form_submit_button("Cadastrar Aluno", use_container_width=True)
             if btn_cadastrar:
                 if not turma_escolhida or not novo_aluno:
-                    st.error("Preencha todos os campos.")
+                    st.error("Preencha a turma e o nome do aluno.")
                 else:
-                    novo_registro = pd.DataFrame([{"Turma": turma_escolhida, "Aluno": novo_aluno.title()}])
+                    novo_registro = pd.DataFrame([{
+                        "Turma": turma_escolhida, 
+                        "Aluno": novo_aluno.title(),
+                        "Responsavel1": resp1,
+                        "Responsavel2": resp2
+                    }])
                     df_atualizado = pd.concat([df_alunos, novo_registro], ignore_index=True)
                     df_atualizado.to_csv(ARQUIVO_ALUNOS, index=False)
                     st.success(f"Aluno(a) {novo_aluno.title()} cadastrado(a)!")
@@ -208,18 +220,20 @@ def exibir_painel_secretaria():
 
     with tab_massa:
         st.subheader("Importação em Lote (Excel/CSV)")
-        arquivo_upload = st.file_uploader("Arquivo com colunas 'Turma' e 'Aluno'", type=["csv", "xlsx"])
+        st.info("O arquivo deve conter obrigatoriamente as colunas: **Turma**, **Aluno**, **Responsavel1**, **Responsavel2**.")
+        arquivo_upload = st.file_uploader("Arquivo de matrículas", type=["csv", "xlsx"])
         if arquivo_upload is not None:
             try:
                 df_importado = pd.read_csv(arquivo_upload) if arquivo_upload.name.endswith('.csv') else pd.read_excel(arquivo_upload)
-                if 'Turma' in df_importado.columns and 'Aluno' in df_importado.columns:
+                colunas_necessarias = ['Turma', 'Aluno', 'Responsavel1', 'Responsavel2']
+                if all(col in df_importado.columns for col in colunas_necessarias):
                     st.dataframe(df_importado.head(), use_container_width=True)
                     if st.button("Confirmar Importação", type="primary"):
-                        df_importado[['Turma', 'Aluno']].to_csv(ARQUIVO_ALUNOS, index=False)
+                        df_importado[colunas_necessarias].to_csv(ARQUIVO_ALUNOS, index=False)
                         st.success("Base atualizada com sucesso!")
                         st.rerun()
                 else:
-                    st.error("O arquivo precisa conter colunas exatas: 'Turma' e 'Aluno'.")
+                    st.error(f"O arquivo precisa conter exatamente as colunas: {colunas_necessarias}")
             except Exception as e:
                 st.error(f"Erro: {e}")
 
@@ -244,7 +258,7 @@ def exibir_painel_secretaria():
         st.write(cats_atuais)
 
     st.divider()
-    st.subheader("📋 Base Atual de Alunos")
+    st.subheader("📋 Base Atual de Alunos e Contatos")
     st.dataframe(df_alunos, use_container_width=True, hide_index=True)
 
 # 5. GERENCIAMENTO DE PERFIS E TELAS
@@ -282,16 +296,30 @@ elif st.session_state.nivel_acesso == "Coordenação" or st.session_state.nivel_
             st.dataframe(dados_filtrados, use_container_width=True, hide_index=True)
             
             if not dados_filtrados.empty:
-                # Botão WhatsApp (Canal Rápido com Responsáveis)
+                aluno_info = df_alunos[df_alunos["Aluno"] == aluno_busca]
+                tel1 = str(aluno_info["Responsavel1"].values[0]) if not aluno_info.empty and pd.notna(aluno_info["Responsavel1"].values[0]) else ""
+                tel2 = str(aluno_info["Responsavel2"].values[0]) if not aluno_info.empty and pd.notna(aluno_info["Responsavel2"].values[0]) else ""
+                
                 msg_whatsapp = f"Olá, responsável por {aluno_busca} ({turma_busca}). Segue o resumo das ocorrências registradas na escola:\n\n"
                 for _, r in dados_filtrados.iterrows():
                     msg_whatsapp += f"- Data: {r['Data']} | {r['Categoria']}: {r['Descrição']}\n"
                 msg_encoded = urllib.parse.quote(msg_whatsapp)
-                link_wa = f"https://wa.me/?text={msg_encoded}"
                 
-                st.markdown(f'<a href="{link_wa}" target="_blank"><button style="background-color:#25D366;color:white;padding:10px 20px;border:none;border-radius:5px;cursor:pointer;font-weight:bold;width:100%;">💬 Enviar Resumo via WhatsApp para Responsável</button></a>', unsafe_allow_html=True)
-                st.write("")
+                col_w1, col_w2 = st.columns(2)
+                with col_w1:
+                    if tel1.strip():
+                        link_wa1 = f"https://wa.me/55{tel1.strip()}?text={msg_encoded}"
+                        st.markdown(f'<a href="{link_wa1}" target="_blank"><button style="background-color:#25D366;color:white;padding:10px 15px;border:none;border-radius:5px;cursor:pointer;font-weight:bold;width:100%;">💬 Enviar WhatsApp (Resp. 1)</button></a>', unsafe_allow_html=True)
+                    else:
+                        st.info("Resp. 1 sem telefone cadastrado.")
+                with col_w2:
+                    if tel2.strip():
+                        link_wa2 = f"https://wa.me/55{tel2.strip()}?text={msg_encoded}"
+                        st.markdown(f'<a href="{link_wa2}" target="_blank"><button style="background-color:#25D366;color:white;padding:10px 15px;border:none;border-radius:5px;cursor:pointer;font-weight:bold;width:100%;">💬 Enviar WhatsApp (Resp. 2)</button></a>', unsafe_allow_html=True)
+                    else:
+                        st.caption("Resp. 2 sem telefone cadastrado.")
 
+                st.write("")
                 arquivo_pdf = gerar_pdf(dados_filtrados, aluno_busca, turma_busca)
                 st.download_button(
                     label=f"📄 Baixar Relatório Oficial de {aluno_busca} (PDF)",
@@ -308,7 +336,6 @@ elif st.session_state.nivel_acesso == "Coordenação" or st.session_state.nivel_
         if dados_historico.empty:
             st.info("Sem dados suficientes.")
         else:
-            # Filtro por Período de Datas
             dados_historico['Data_Obj'] = pd.to_datetime(dados_historico['Data']).dt.date
             min_d = dados_historico['Data_Obj'].min()
             max_d = dados_historico['Data_Obj'].max()
