@@ -30,9 +30,6 @@ def obter_caminho_arquivo(nome_arquivo):
     os.makedirs(diretorio_escola, exist_ok=True)
     return os.path.join(diretorio_escola, nome_arquivo)
 
-NOME_DA_ESCOLA = "Sistema de Gestão Pedagógica"
-ARQUIVO_LOGO = "logo.png"
-
 # --- GESTÃO DE CREDENCIAIS DINÂMICAS ---
 def carregar_credenciais():
     caminho = obter_caminho_arquivo("config.json")
@@ -43,7 +40,6 @@ def carregar_credenciais():
         except:
             pass
     
-    # Credenciais padrão caso o arquivo não exista
     creds_iniciais = {
         "senha_professor": "prof123",
         "senha_coordenador": "coord123",
@@ -58,7 +54,6 @@ def salvar_credenciais(creds):
         json.dump(creds, f, ensure_ascii=False, indent=4)
 
 def inicializar_arquivos():
-    # Garante a criação do config.json com as senhas da escola
     carregar_credenciais()
     
     caminho_alunos = obter_caminho_arquivo("alunos.csv")
@@ -115,11 +110,15 @@ def carregar_dados():
 def gerar_pdf(dados_aluno, nome_aluno, turma):
     pdf = FPDF(orientation="P", unit="mm", format="A4")
     pdf.add_page()
-    if os.path.exists(ARQUIVO_LOGO):
-        pdf.image(ARQUIVO_LOGO, x=10, y=8, w=30)
     
+    # Logo dinâmica da escola
+    caminho_logo_escola = obter_caminho_arquivo("logo.png")
+    if os.path.exists(caminho_logo_escola):
+        pdf.image(caminho_logo_escola, x=10, y=8, w=30)
+    
+    nome_escola_atual = st.session_state.get('escola_nome', 'Sistema Escolar')
     pdf.set_font("helvetica", "B", 16)
-    pdf.cell(0, 10, st.session_state.get('escola_nome', NOME_DA_ESCOLA), ln=True, align="C")
+    pdf.cell(0, 10, nome_escola_atual, ln=True, align="C")
     pdf.set_font("helvetica", "I", 12)
     pdf.cell(0, 10, "Dossiê de Ocorrências Escolares - Relatório Oficial", ln=True, align="C")
     pdf.ln(15) 
@@ -182,7 +181,6 @@ if st.session_state.nivel_acesso is None:
                 st.session_state.escola_cidade = cidade_inst
                 inicializar_arquivos()
                 
-                # Carrega as senhas específicas desta escola
                 creds = carregar_credenciais()
                 
                 if senha_digitada == creds.get("senha_professor"):
@@ -202,7 +200,10 @@ if st.session_state.nivel_acesso is None:
 inicializar_arquivos()
 
 with st.sidebar:
-    st.image(ARQUIVO_LOGO, width=150) if os.path.exists(ARQUIVO_LOGO) else None
+    caminho_logo_sidebar = obter_caminho_arquivo("logo.png")
+    if os.path.exists(caminho_logo_sidebar):
+        st.image(caminho_logo_sidebar, width=150)
+    
     st.info(f"🏫 **{st.session_state.escola_nome}**\n📍 *{st.session_state.escola_cidade}*\n\n👤 Usuário: **{st.session_state.nivel_acesso}**")
     if st.button("Sair / Trocar Escola", use_container_width=True):
         st.session_state.nivel_acesso = None
@@ -254,12 +255,12 @@ def exibir_formulario():
         novo_dado.to_csv(caminho_csv, mode='a', header=not os.path.exists(caminho_csv), index=False)
         st.success(f"✅ Ocorrência registrada com sucesso para {aluno}!")
 
-# 4. PAINEL DA SECRETARIA (Com Gerenciamento de Senhas)
+# 4. PAINEL DA SECRETARIA (Com Upload de Logo e Gestão de Senhas)
 def exibir_painel_secretaria():
     st.markdown("### 🗂️ Gestão Administrativa")
     
-    tab_alunos, tab_massa, tab_categorias, tab_senhas = st.tabs([
-        "➕ Alunos e Turmas", "📤 Importação em Lote", "⚙️ Categorias", "🔑 Senhas de Acesso"
+    tab_alunos, tab_massa, tab_categorias, tab_senhas, tab_marca = st.tabs([
+        "➕ Alunos e Turmas", "📤 Importação em Lote", "⚙️ Categorias", "🔑 Senhas", "🖼️ Identidade Visual (Logo)"
     ])
     
     df_alunos = carregar_alunos()
@@ -371,6 +372,22 @@ def exibir_painel_secretaria():
                     }
                     salvar_credenciais(novas_creds)
                     st.success("🔒 Senhas atualizadas com sucesso para esta escola!")
+
+    with tab_marca:
+        st.subheader("🖼️ Logotipo da Escola")
+        st.write("Envie o brasão ou logotipo oficial da instituição (formatos PNG ou JPG). Ele aparecerá no menu lateral e nos relatórios em PDF.")
+        
+        logo_upload = st.file_uploader("Escolher arquivo de imagem", type=["png", "jpg", "jpeg"])
+        if logo_upload is not None:
+            caminho_logo_destino = obter_caminho_arquivo("logo.png")
+            with open(caminho_logo_destino, "wb") as f:
+                f.write(logo_upload.getbuffer())
+            st.success("✅ Logotipo atualizado com sucesso! Recarregue a página se necessário para visualizar.")
+        
+        caminho_atual = obter_caminho_arquivo("logo.png")
+        if os.path.exists(caminho_atual):
+            st.write("Logo atual cadastrada:")
+            st.image(caminho_atual, width=120)
 
     st.divider()
     st.subheader("📋 Base Atual de Alunos e Contatos")
