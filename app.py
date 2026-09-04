@@ -1,5 +1,6 @@
 import os
 import re
+import unicodedata
 from datetime import date, datetime
 import pandas as pd
 from fpdf import FPDF
@@ -7,13 +8,30 @@ import streamlit as st
 import urllib.parse
 
 # 1. CONFIGURAÇÃO DA PÁGINA
-st.set_page_config(page_title="Dossiê Escolar 3.1", page_icon="🏫", layout="centered")
+st.set_page_config(page_title="Dossiê Escolar - SaaS", page_icon="🏫", layout="centered")
 
-# --- CONFIGURAÇÕES DO SISTEMA ---
-ARQUIVO_CSV = "ocorrencias.csv"
-ARQUIVO_ALUNOS = "alunos.csv"
-ARQUIVO_CATEGORIAS = "categorias.txt"
-NOME_DA_ESCOLA = "Colégio Modelo"
+# --- FUNÇÃO DE SLUG E ISOLAMENTO MULTI-TENANT ---
+def gerar_slug(texto):
+    if not texto:
+        return "geral"
+    # Remove acentos (ex: "São Paulo" vira "Sao Paulo")
+    nfkd = unicodedata.normalize('NFKD', texto)
+    sem_acento = "".join([c for c in nfkd if not unicodedata.combining(c)])
+    # Transforma em minúsculas e troca espaços/caracteres especiais por "_"
+    slug = re.sub(r'[^a-zA-Z0-9]+', '_', sem_acento).lower().strip('_')
+    return slug
+
+def obter_caminho_arquivo(nome_arquivo):
+    escola_nome = st.session_state.get('escola_nome', 'colegio_modelo')
+    escola_cidade = st.session_state.get('escola_cidade', 'londrina_pr')
+    
+    identificador_unico = f"{gerar_slug(escola_nome)}_{gerar_slug(escola_cidade)}"
+    
+    diretorio_escola = os.path.join("dados_escolas", identificador_unico)
+    os.makedirs(diretorio_escola, exist_ok=True)
+    return os.path.join(diretorio_escola, nome_arquivo)
+
+NOME_DA_ESCOLA = "Sistema de Gestão Pedagógica"
 ARQUIVO_LOGO = "logo.png"
 
 SENHA_PROFESSOR = "prof123"
@@ -22,7 +40,8 @@ SENHA_SECRETARIA = "sec123"
 # --------------------------------
 
 def inicializar_arquivos():
-    if not os.path.exists(ARQUIVO_ALUNOS):
+    caminho_alunos = obter_caminho_arquivo("alunos.csv")
+    if not os.path.exists(caminho_alunos):
         df_inicial = pd.DataFrame({
             "Turma": ["1º Ano A", "1º Ano A", "2º Ano B"],
             "Aluno": ["Ana Silva", "Carlos Mendes", "Beatriz Costa"],
@@ -31,9 +50,10 @@ def inicializar_arquivos():
             "Responsavel2": ["Pedro Silva", "", ""],
             "telefone2": ["43999994444", "", ""]
         })
-        df_inicial.to_csv(ARQUIVO_ALUNOS, index=False)
+        df_inicial.to_csv(caminho_alunos, index=False)
         
-    if not os.path.exists(ARQUIVO_CATEGORIAS):
+    caminho_cats = obter_caminho_arquivo("categorias.txt")
+    if not os.path.exists(caminho_cats):
         cats_iniciais = [
             "Atraso injustificado", 
             "Não entregue atividade", 
@@ -41,14 +61,13 @@ def inicializar_arquivos():
             "Dificuldade de aprendizagem", 
             "Conflito com colegas"
         ]
-        with open(ARQUIVO_CATEGORIAS, "w", encoding="utf-8") as f:
+        with open(caminho_cats, "w", encoding="utf-8") as f:
             f.write("\n".join(cats_iniciais))
 
-inicializar_arquivos()
-
 def carregar_alunos():
-    if os.path.exists(ARQUIVO_ALUNOS):
-        df = pd.read_csv(ARQUIVO_ALUNOS)
+    caminho = obter_caminho_arquivo("alunos.csv")
+    if os.path.exists(caminho):
+        df = pd.read_csv(caminho)
         for col in ["Turma", "Aluno", "Responsavel1", "telefone1", "Responsavel2", "telefone2"]:
             if col not in df.columns:
                 df[col] = ""
@@ -56,14 +75,16 @@ def carregar_alunos():
     return pd.DataFrame(columns=["Turma", "Aluno", "Responsavel1", "telefone1", "Responsavel2", "telefone2"])
 
 def carregar_categorias():
-    if os.path.exists(ARQUIVO_CATEGORIAS):
-        with open(ARQUIVO_CATEGORIAS, "r", encoding="utf-8") as f:
+    caminho = obter_caminho_arquivo("categorias.txt")
+    if os.path.exists(caminho):
+        with open(caminho, "r", encoding="utf-8") as f:
             return [line.strip() for line in f.readlines() if line.strip()]
     return ["Indisciplina em sala"]
 
 def carregar_dados():
-    if os.path.exists(ARQUIVO_CSV):
-        df = pd.read_csv(ARQUIVO_CSV)
+    caminho = obter_caminho_arquivo("ocorrencias.csv")
+    if os.path.exists(caminho):
+        df = pd.read_csv(caminho)
         if "Matéria" not in df.columns:
             df["Matéria"] = "Geral / Diversos"
         return df
@@ -77,7 +98,7 @@ def gerar_pdf(dados_aluno, nome_aluno, turma):
         pdf.image(ARQUIVO_LOGO, x=10, y=8, w=30)
     
     pdf.set_font("helvetica", "B", 16)
-    pdf.cell(0, 10, NOME_DA_ESCOLA, ln=True, align="C")
+    pdf.cell(0, 10, st.session_state.get('escola_nome', NOME_DA_ESCOLA), ln=True, align="C")
     pdf.set_font("helvetica", "I", 12)
     pdf.cell(0, 10, "Dossiê de Ocorrências Escolares - Relatório Oficial", ln=True, align="C")
     pdf.ln(15) 
@@ -113,36 +134,53 @@ def gerar_pdf(dados_aluno, nome_aluno, turma):
     
     return bytes(pdf.output())
 
-# 2. LÓGICA DE LOGIN
+# 2. LÓGICA DE LOGIN COM IDENTIFICAÇÃO DE ESCOLA E CIDADE
 if "nivel_acesso" not in st.session_state:
     st.session_state.nivel_acesso = None
+if "escola_nome" not in st.session_state:
+    st.session_state.escola_nome = ""
+if "escola_cidade" not in st.session_state:
+    st.session_state.escola_cidade = ""
 
 if st.session_state.nivel_acesso is None:
-    st.markdown(f"<h1 style='text-align: center;'>🏫 {NOME_DA_ESCOLA}</h1>", unsafe_allow_html=True)
-    st.markdown("<h3 style='text-align: center; color: gray;'>Sistema de Gestão Pedagógica 3.1</h3>", unsafe_allow_html=True)
+    st.markdown(f"<h1 style='text-align: center;'>🏫 Portal de Gestão Escolar</h1>", unsafe_allow_html=True)
+    st.markdown("<h3 style='text-align: center; color: gray;'>Identifique sua instituição para acessar</h3>", unsafe_allow_html=True)
     st.write("")
     
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        senha_digitada = st.text_input("🔑 Digite sua senha de acesso:", type="password")
+        nome_inst = st.text_input("🏢 Nome da Escola:", placeholder="Ex: Colégio Alfa").strip()
+        cidade_inst = st.text_input("📍 Cidade / Estado:", placeholder="Ex: Londrina - PR").strip()
+        senha_digitada = st.text_input("🔑 Senha de acesso:", type="password")
+        
         if st.button("Entrar no Sistema", use_container_width=True):
-            if senha_digitada == SENHA_PROFESSOR:
-                st.session_state.nivel_acesso = "Professor"
-                st.rerun()
-            elif senha_digitada == SENHA_COORDENACAO:
-                st.session_state.nivel_acesso = "Coordenador"
-                st.rerun()
-            elif senha_digitada == SENHA_SECRETARIA:
-                st.session_state.nivel_acesso = "Secretaria"
-                st.rerun()
+            if not nome_inst or not cidade_inst:
+                st.error("Preencha o nome da escola e a cidade/estado.")
             else:
-                st.error("Senha incorreta.")
+                st.session_state.escola_nome = nome_inst
+                st.session_state.escola_cidade = cidade_inst
+                inicializar_arquivos()
+                
+                if senha_digitada == SENHA_PROFESSOR:
+                    st.session_state.nivel_acesso = "Professor"
+                    st.rerun()
+                elif senha_digitada == SENHA_COORDENACAO:
+                    st.session_state.nivel_acesso = "Coordenador"
+                    st.rerun()
+                elif senha_digitada == SENHA_SECRETARIA:
+                    st.session_state.nivel_acesso = "Secretaria"
+                    st.rerun()
+                else:
+                    st.error("Senha incorreta.")
     st.stop()
+
+# Garante inicialização dos arquivos da escola ativa
+inicializar_arquivos()
 
 with st.sidebar:
     st.image(ARQUIVO_LOGO, width=150) if os.path.exists(ARQUIVO_LOGO) else None
-    st.info(f"Usuário ativo: **{st.session_state.nivel_acesso}**")
-    if st.button("Sair do Sistema", use_container_width=True):
+    st.info(f"🏫 **{st.session_state.escola_nome}**\n📍 *{st.session_state.escola_cidade}*\n\n👤 Usuário: **{st.session_state.nivel_acesso}**")
+    if st.button("Sair / Trocar Escola", use_container_width=True):
         st.session_state.nivel_acesso = None
         st.rerun()
 
@@ -160,7 +198,7 @@ def exibir_formulario():
     turmas_disponiveis = sorted(df_alunos["Turma"].dropna().unique().tolist())
     materias_disponiveis = [
         "Matemática", "Português", "Biologia", "História", "Geografia", 
-        "Física", "Química", "Inglês", "Eduração Física", "Sociologia", "Filosofia", "Geral / Diversos"
+        "Física", "Química", "Inglês", "Educação Física", "Sociologia", "Filosofia", "Geral / Diversos"
     ]
 
     with st.form("form_ocorrencia"):
@@ -188,7 +226,8 @@ def exibir_formulario():
             "Data": data_registro, "Turma": turma, "Aluno": aluno, 
             "Matéria": materia, "Categoria": categoria, "Descrição": descricao
         }])
-        novo_dado.to_csv(ARQUIVO_CSV, mode='a', header=not os.path.exists(ARQUIVO_CSV), index=False)
+        caminho_csv = obter_caminho_arquivo("ocorrencias.csv")
+        novo_dado.to_csv(caminho_csv, mode='a', header=not os.path.exists(caminho_csv), index=False)
         st.success(f"✅ Ocorrência registrada com sucesso para {aluno}!")
 
 # 4. PAINEL DA SECRETARIA
@@ -235,7 +274,7 @@ def exibir_painel_secretaria():
                         "telefone2": tel2 if tel2 else ""
                     }])
                     df_atualizado = pd.concat([df_alunos, novo_registro], ignore_index=True)
-                    df_atualizado.to_csv(ARQUIVO_ALUNOS, index=False)
+                    df_atualizado.to_csv(obter_caminho_arquivo("alunos.csv"), index=False)
                     st.success(f"Aluno(a) {novo_aluno.title()} cadastrado(a)!")
                     st.rerun()
 
@@ -259,7 +298,7 @@ def exibir_painel_secretaria():
                     
                     st.dataframe(df_importado.head(), use_container_width=True)
                     if st.button("Confirmar Importação", type="primary"):
-                        df_importado.to_csv(ARQUIVO_ALUNOS, index=False)
+                        df_importado.to_csv(obter_caminho_arquivo("alunos.csv"), index=False)
                         st.success("Base atualizada com sucesso!")
                         st.rerun()
                 else:
@@ -277,7 +316,7 @@ def exibir_painel_secretaria():
             if btn_add_cat and nova_cat:
                 if nova_cat not in cats_atuais:
                     cats_atuais.append(nova_cat)
-                    with open(ARQUIVO_CATEGORIAS, "w", encoding="utf-8") as f:
+                    with open(obter_caminho_arquivo("categorias.txt"), "w", encoding="utf-8") as f:
                         f.write("\n".join(cats_atuais))
                     st.success(f"Categoria '{nova_cat}' adicionada!")
                     st.rerun()
@@ -333,7 +372,6 @@ elif st.session_state.nivel_acesso == "Coordenação" or st.session_state.nivel_
                 resp2_nome = str(aluno_info["Responsavel2"].values[0]) if not aluno_info.empty and pd.notna(aluno_info["Responsavel2"].values[0]) else "Responsável 2"
                 tel2_raw = str(aluno_info["telefone2"].values[0]) if not aluno_info.empty and pd.notna(aluno_info["telefone2"].values[0]) else ""
                 
-                # Limpeza de caracteres não numéricos para evitar erro 404 no WhatsApp
                 tel1 = re.sub(r'\D', '', tel1_raw)
                 tel2 = re.sub(r'\D', '', tel2_raw)
                 
@@ -417,7 +455,7 @@ elif st.session_state.nivel_acesso == "Coordenação" or st.session_state.nivel_
             st.write("Edite diretamente as informações ou exclua registros incorretos:")
             df_editado = st.data_editor(dados_historico, num_rows="dynamic", use_container_width=True)
             if st.button("Salvar Alterações no Banco de Ocorrências", type="primary"):
-                df_editado.drop(columns=[c for c in df_editado.columns if 'Data_Obj' in c], errors='ignore').to_csv(ARQUIVO_CSV, index=False)
+                df_editado.drop(columns=[c for c in df_editado.columns if 'Data_Obj' in c], errors='ignore').to_csv(obter_caminho_arquivo("ocorrencias.csv"), index=False)
                 st.success("Alterações salvas com sucesso!")
                 st.rerun()
 
