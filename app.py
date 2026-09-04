@@ -201,7 +201,7 @@ def exibir_formulario():
     st.success(f"✅ Ocorrência registrada com sucesso para {aluno}!")
 
 
-# 4. PAINEL DA SECRETARIA
+# 4. PAINEL DA SECRETARIA (Com Seleção/Criação Dinâmica de Turmas)
 def exibir_painel_secretaria():
   st.markdown("### 🗂️ Gestão de Matrículas, Turmas e Alunos")
 
@@ -215,9 +215,26 @@ def exibir_painel_secretaria():
     with st.form("form_novo_aluno"):
       st.subheader("Matricular Aluno Individualmente")
       c1, c2 = st.columns(2)
+
       with c1:
-        nova_turma = st.text_input("Turma (Ex: 1º Ano B):").strip()
+        turmas_existentes = sorted(
+            df_alunos["Turma"].dropna().unique().tolist()
+        )
+        if turmas_existentes:
+          tipo_turma = st.radio(
+              "Destino da Turma", ["Turma Existente", "Nova Turma"]
+          )
+          if tipo_turma == "Turma Existente":
+            turma_escolhida = st.selectbox("Selecione a Turma", turmas_existentes)
+          else:
+            turma_escolhida = st.text_input("Nome da Nova Turma:").strip()
+        else:
+          st.info("Nenhuma turma cadastrada. Digite a primeira turma:")
+          turma_escolhida = st.text_input("Nome da Nova Turma:").strip()
+
       with c2:
+        st.write("")
+        st.write("")
         novo_aluno = st.text_input("Nome Completo do Aluno:").strip()
 
       btn_cadastrar = st.form_submit_button(
@@ -225,11 +242,13 @@ def exibir_painel_secretaria():
       )
 
       if btn_cadastrar:
-        if nova_turma == "" or novo_aluno == "":
-          st.error("Preencha todos os campos.")
+        if not turma_escolhida or not novo_aluno:
+          st.error(
+              "Preencha ou selecione a turma e informe o nome do aluno."
+          )
         else:
           novo_registro = pd.DataFrame(
-              [{"Turma": nova_turma, "Aluno": novo_aluno.title()}]
+              [{"Turma": turma_escolhida, "Aluno": novo_aluno.title()}]
           )
           df_atualizado = pd.concat([df_alunos, novo_registro], ignore_index=True)
           df_atualizado.to_csv(ARQUIVO_ALUNOS, index=False)
