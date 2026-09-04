@@ -19,7 +19,6 @@ SENHA_SECRETARIA = "sec123"
 # --------------------------------
 
 
-# Garante que o arquivo de alunos exista com dados iniciais se for a primeira execução
 def inicializar_alunos():
   if not os.path.exists(ARQUIVO_ALUNOS):
     df_inicial = pd.DataFrame({
@@ -30,9 +29,6 @@ def inicializar_alunos():
             "2º Ano B",
             "2º Ano B",
             "2º Ano B",
-            "3º Ano A",
-            "3º Ano A",
-            "3º Ano A",
         ],
         "Aluno": [
             "Ana Silva",
@@ -41,9 +37,6 @@ def inicializar_alunos():
             "Beatriz Costa",
             "Daniel Souza",
             "Joaquim Phoenix",
-            "Eduardo Lima",
-            "Fernanda Montenegro",
-            "Gabriel Pensador",
         ],
     })
     df_inicial.to_csv(ARQUIVO_ALUNOS, index=False)
@@ -53,7 +46,9 @@ inicializar_alunos()
 
 
 def carregar_alunos():
-  return pd.read_csv(ARQUIVO_ALUNOS)
+  if os.path.exists(ARQUIVO_ALUNOS):
+    return pd.read_csv(ARQUIVO_ALUNOS)
+  return pd.DataFrame(columns=["Turma", "Aluno"])
 
 
 def carregar_dados():
@@ -108,7 +103,7 @@ def gerar_pdf(dados_aluno, nome_aluno, turma):
   return bytes(pdf.output())
 
 
-# 2. LÓGICA DE LOGIN COM PERFIS
+# 2. LÓGICA DE LOGIN
 if "nivel_acesso" not in st.session_state:
   st.session_state.nivel_acesso = None
 
@@ -141,7 +136,6 @@ if st.session_state.nivel_acesso is None:
         st.error("Senha incorreta.")
   st.stop()
 
-# Menu Lateral (Logout)
 with st.sidebar:
   st.image(ARQUIVO_LOGO, width=150) if os.path.exists(ARQUIVO_LOGO) else None
   st.info(f"Usuário ativo: **{st.session_state.nivel_acesso}**")
@@ -150,12 +144,19 @@ with st.sidebar:
     st.rerun()
 
 
-# 3. FUNÇÃO DO FORMULÁRIO (Lendo alunos dinamicamente do CSV)
+# 3. FORMULÁRIO DO PROFESSOR
 def exibir_formulario():
   st.markdown("### 📝 Registrar Nova Ocorrência")
 
   df_alunos = carregar_alunos()
-  turmas_disponiveis = sorted(df_alunos["Turma"].unique().tolist())
+  if df_alunos.empty:
+    st.warning(
+        "⚠️ Nenhuma turma ou aluno cadastrado no sistema. Solicite à Secretaria"
+        " que realize o cadastro."
+    )
+    return
+
+  turmas_disponiveis = sorted(df_alunos["Turma"].dropna().unique().tolist())
 
   with st.form("form_ocorrencia"):
     col1, col2 = st.columns(2)
@@ -164,9 +165,8 @@ def exibir_formulario():
     with col2:
       turma = st.selectbox("Turma", turmas_disponiveis)
 
-    # Filtra alunos da turma selecionada
     alunos_da_turma = sorted(
-        df_alunos[df_alunos["Turma"] == turma]["Aluno"].tolist()
+        df_alunos[df_alunos["Turma"] == turma]["Aluno"].dropna().unique().tolist()
     )
 
     col3, col4 = st.columns(2)
@@ -177,7 +177,7 @@ def exibir_formulario():
           "Natureza da Ocorrência",
           [
               "Atraso injustificado",
-              "Não entregou atividade",
+              "Não entregue atividade",
               "Indisciplina em sala",
               "Dificuldade de aprendizagem",
               "Conflito com colegas",
@@ -201,46 +201,79 @@ def exibir_formulario():
     st.success(f"✅ Ocorrência registrada com sucesso para {aluno}!")
 
 
-# 4. PAINEL DA SECRETARIA (Gerenciamento de Matrículas)
+# 4. PAINEL DA SECRETARIA
 def exibir_painel_secretaria():
-  st.markdown("### 🗂️ Gestão de Matrículas e Alunos")
-  st.write(
-      "Adicione novos estudantes ou visualize os alunos cadastrados no sistema."
+  st.markdown("### 🗂️ Gestão de Matrículas, Turmas e Alunos")
+
+  tab_manual, tab_massa = st.tabs(
+      ["➕ Cadastro Manual", "📤 Importar Planilha (Excel/CSV)"]
   )
 
   df_alunos = carregar_alunos()
 
-  with st.form("form_novo_aluno"):
-    st.subheader("Matricular Novo Aluno")
-    c1, c2 = st.columns(2)
-    with c1:
-      nova_turma = st.text_input(
-          "Turma (Ex: 1º Ano B, 2º Ano A):"
-      ).strip()
-    with c2:
-      novo_aluno = st.text_input("Nome Completo do Aluno:").strip()
+  with tab_manual:
+    with st.form("form_novo_aluno"):
+      st.subheader("Matricular Aluno Individualmente")
+      c1, c2 = st.columns(2)
+      with c1:
+        nova_turma = st.text_input("Turma (Ex: 1º Ano B):").strip()
+      with c2:
+        novo_aluno = st.text_input("Nome Completo do Aluno:").strip()
 
-    btn_cadastrar = st.form_submit_button(
-        "Cadastrar Aluno", use_container_width=True
+      btn_cadastrar = st.form_submit_button(
+          "Cadastrar Aluno", use_container_width=True
+      )
+
+      if btn_cadastrar:
+        if nova_turma == "" or novo_aluno == "":
+          st.error("Preencha todos os campos.")
+        else:
+          novo_registro = pd.DataFrame(
+              [{"Turma": nova_turma, "Aluno": novo_aluno.title()}]
+          )
+          df_atualizado = pd.concat([df_alunos, novo_registro], ignore_index=True)
+          df_atualizado.to_csv(ARQUIVO_ALUNOS, index=False)
+          st.success(f"Aluno(a) {novo_aluno.title()} adicionado(a) com sucesso!")
+          st.rerun()
+
+  with tab_massa:
+    st.subheader("Importação em Lote de Turmas e Alunos")
+    st.info(
+        "Envie um arquivo Excel (.xlsx) ou CSV contendo obrigatoriamente duas"
+        " colunas chamadas exatos: **Turma** e **Aluno**."
     )
 
-    if btn_cadastrar:
-      if nova_turma == "" or novo_aluno == "":
-        st.error("Preencha todos os campos para cadastrar o aluno.")
-      else:
-        novo_registro = pd.DataFrame(
-            [{"Turma": nova_turma, "Aluno": novo_aluno.title()}]
-        )
-        df_atualizado = pd.concat([df_alunos, novo_registro], ignore_index=True)
-        df_atualizado.to_csv(ARQUIVO_ALUNOS, index=False)
-        st.success(
-            f"Aluno(a) {novo_aluno.title()} matriculado(a) na turma"
-            f" {nova_turma} com sucesso!"
-        )
-        st.rerun()
+    arquivo_upload = st.file_uploader(
+        "Escolha o arquivo de matrículas", type=["csv", "xlsx"]
+    )
+
+    if arquivo_upload is not None:
+      try:
+        if arquivo_upload.name.endswith(".csv"):
+          df_importado = pd.read_csv(arquivo_upload)
+        else:
+          df_importado = pd.read_excel(arquivo_upload)
+
+        if "Turma" in df_importado.columns and "Aluno" in df_importado.columns:
+          st.write("Prévia dos dados encontrados no arquivo:")
+          st.dataframe(df_importado.head(), use_container_width=True)
+
+          if st.button(
+              "Confirmar Importação e Substituir/Atualizar Base", type="primary"
+          ):
+            df_importado[["Turma", "Aluno"]].to_csv(ARQUIVO_ALUNOS, index=False)
+            st.success("Base de turmas e alunos atualizada com sucesso!")
+            st.rerun()
+        else:
+          st.error(
+              "O arquivo enviado precisa conter colunas com os nomes exatos:"
+              " 'Turma' e 'Aluno'."
+          )
+      except Exception as e:
+        st.error(f"Erro ao ler o arquivo: {e}")
 
   st.divider()
-  st.subheader("📋 Alunos Atualmente Matriculados")
+  st.subheader("📋 Base Atual de Alunos e Turmas Matriculadas")
   st.dataframe(df_alunos, use_container_width=True, hide_index=True)
 
 
@@ -269,14 +302,19 @@ elif st.session_state.nivel_acesso == "Coordenador":
 
     if dados_historico.empty:
       st.info("Nenhuma ocorrência registrada ainda no sistema.")
+    elif df_alunos.empty:
+      st.warning("Cadastre turmas e alunos na aba Secretaria.")
     else:
-      turmas_disponiveis = sorted(df_alunos["Turma"].unique().tolist())
+      turmas_disponiveis = sorted(df_alunos["Turma"].dropna().unique().tolist())
       col_busca1, col_busca2 = st.columns(2)
       with col_busca1:
         turma_busca = st.selectbox("Filtrar por Turma:", turmas_disponiveis)
       with col_busca2:
         alunos_turma_busca = sorted(
-            df_alunos[df_alunos["Turma"] == turma_busca]["Aluno"].tolist()
+            df_alunos[df_alunos["Turma"] == turma_busca]["Aluno"]
+            .dropna()
+            .unique()
+            .tolist()
         )
         aluno_busca = st.selectbox("Selecionar Aluno:", alunos_turma_busca)
 
@@ -343,4 +381,4 @@ elif st.session_state.nivel_acesso == "Coordenador":
       st.dataframe(ranking_alunos, use_container_width=True, hide_index=True)
 
   with aba4:
-    exibir_painel_secretaria()  
+    exibir_painel_secretaria()
